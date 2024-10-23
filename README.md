@@ -1,40 +1,99 @@
-This is a [Next.js](https://nextjs.org/) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# Document Manager Client
 
-## Getting Started
+## Project Overview
 
-First, run the development server:
+This project is the frontend application for the **Document Manager**. It handles user interactions, rendering data, and enforcing role-based access control (RBAC) using **Permit.io** and **CASL.js** for frontend authorization.
+
+The application is built using:
+- **React/Next.js**
+- **TypeScript**
+- **TailwindCSS** for styling
+- **Permit.io** for role-based access control
+- **CASL.js** for frontend permission checks
+- **Clerk** for user authentication
+
+## Table of Contents
+- [Project Overview](#project-overview)
+- [Tech Stack](#tech-stack)
+- [Installation](#installation)
+- [Environment Variables](#environment-variables)
+- [Project Structure](#project-structure)
+- [Authentication](#authentication)
+- [Authorization](#authorization)
+- [Features](#features)
+
+## Tech Stack
+- **Framework**: Next.js
+- **Styling**: Tailwind CSS
+- **Authorization**: CASL.js, Permit.io
+- **Authentication**: Clerk
+- **State Management**: React Context API
+- **API Client**: Axios
+- **Package Manager**: Yarn / npm
+
+## Installation
+
+To get started, clone the repository and install dependencies.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone https://github.com/yourusername/document-manager-client.git
+cd document-manager-client
+yarn install
+
+
+## Environment Variables
+
+Create a `.env.local` file in the root directory and add the following variables:
+
+```bash
+NEXT_PUBLIC_CLERK_FRONTEND_API=your-clerk-frontend-api
+NEXT_PUBLIC_API_BASE_URL=http://localhost:5000/api # Backend API URL
+NEXT_PUBLIC_PERMIT_BACKEND_URL=http://localhost:5000/api/policies
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Project Structure
+Here's a high-level overview of the project structure:
+```bash
+.
+├── components/          # Reusable UI components
+├── context/             # React context for global states (AppContext)
+├── pages/               # Next.js pages
+├── public/              # Static assets
+├── styles/              # Global CSS files (Tailwind)
+├── lib/                 # Axios API client and Permit SDK initialization
+└── README.md            # Project documentation
+```
+## Authentication
+This app uses Clerk for authentication. The ClerkProvider wraps the entire app, and SignedIn and SignedOut components handle protected routes.
 
-You can start editing the page by modifying `pages/index.tsx`. The page auto-updates as you edit the file.
+For sign-in and sign-up flows, refer to:
+```jsx
+import { SignInButton } from '@clerk/nextjs';
 
-[API routes](https://nextjs.org/docs/api-routes/introduction) can be accessed on [http://localhost:3000/api/hello](http://localhost:3000/api/hello). This endpoint can be edited in `pages/api/hello.ts`.
+// Usage
+<SignInButton>
+  <Button className="bg-primary text-white px-6 py-3">Sign In</Button>
+</SignInButton>
+```
 
-The `pages/api` directory is mapped to `/api/*`. Files in this directory are treated as [API routes](https://nextjs.org/docs/api-routes/introduction) instead of React pages.
+## Authorization
+We use CASL.js in combination with Permit.io to manage permissions. User permissions are loaded based on their role assignments and resource instances.
+- CASL.js manages frontend permissions.
+- Permit.io checks against the backend policy server for role assignments and access rights.
 
-This project uses [`next/font`](https://nextjs.org/docs/basic-features/font-optimization) to automatically optimize and load Inter, a custom Google Font.
+Example of Permission Check:
 
-## Learn More
+```tsx
+const { checkPermission } = useApp();
 
-To learn more about Next.js, take a look at the following resources:
+const canCreateDocument = await checkPermission('create', 'Document', 'document_id');
+if (canCreateDocument) {
+  // Show Create Document button
+}
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js/) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/deployment) for more details.
+## Features
+- Role-based Dashboard: User interface adapts based on user roles like Viewer, Editor, Owner.
+- Document and Category Management: Users can create, edit, or delete documents and categories based on roles.
+- Frontend Authorization: Enforces permission checks in real-time.
+- Authentication with Clerk: Simple and secure user login flow.

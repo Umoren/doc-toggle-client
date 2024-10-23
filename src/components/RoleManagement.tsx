@@ -1,114 +1,164 @@
-import { useState } from 'react'
-import { format } from 'date-fns'
-import { Search, Plus, Edit, AlertTriangle } from 'lucide-react'
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger,
-} from "@/components/ui/dialog"
-import { toast } from "@/hooks/use-toast"
+import { useState } from 'react';
+import { format } from 'date-fns';
+import { Search, Plus, Edit } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import apiClient from '@/lib/api';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { toast } from "@/hooks/use-toast";
+import CreateRoleDialog from './CreateRoleDialog';
 
-// Mock data and types (replace with actual data fetching and types)
+// Define the types for User and Role as per your requirements
 type User = {
-    id: string
-    name: string
-    email: string
-    role: string
-    lastLogin: Date
-    status: 'active' | 'inactive'
-}
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+    lastLogin: Date;
+    status: 'active' | 'inactive';
+};
 
 type Role = {
-    id: string
-    name: string
-    description: string
-    permissions: string[]
-    userCount: number
+    id: string;
+    name: string;
+    description: string;
+    permissions: string[];
+    // userCount: number;
+};
+
+interface RoleManagementProps {
+    users: User[];
+    roles: Role[];
+    onUpdateUserRole: (userId: string, roleId: string) => void;
+    onUpdateRole: (role: Role) => void;
+    onDeleteRole: (id: string) => void;
 }
 
-const mockUsers: User[] = [
-    { id: '1', name: 'John Doe', email: 'john@example.com', role: 'Admin', lastLogin: new Date('2024-01-15'), status: 'active' },
-    { id: '2', name: 'Jane Smith', email: 'jane@example.com', role: 'Editor', lastLogin: new Date('2024-01-10'), status: 'active' },
-    { id: '3', name: 'Mike Johnson', email: 'mike@example.com', role: 'Viewer', lastLogin: new Date('2023-12-20'), status: 'inactive' },
-]
 
-const mockRoles: Role[] = [
-    { id: '1', name: 'Admin', description: 'Full access to all features', permissions: ['create', 'read', 'update', 'delete'], userCount: 1 },
-    { id: '2', name: 'Editor', description: 'Can edit and publish documents', permissions: ['read', 'update'], userCount: 1 },
-    { id: '3', name: 'Viewer', description: 'Can only view documents', permissions: ['read'], userCount: 1 },
-]
+export default function RoleManagement({ users, roles, onUpdateUserRole, onUpdateRole, onDeleteRole }: RoleManagementProps) {
+    const [searchTerm, setSearchTerm] = useState('');
+    const [roleFilter, setRoleFilter] = useState<string | null>(null);
+    const [statusFilter, setStatusFilter] = useState<string | null>(null);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+    const [isCreateRoleDialogOpen, setIsCreateRoleDialogOpen] = useState(false);
+    const [actionToConfirm, setActionToConfirm] = useState<{ type: string; payload: any } | null>(null);
+    const [selectedResourceType, setSelectedResourceType] = useState<string | null>(null);
+    const [selectedResourceKey, setSelectedResourceKey] = useState<string | null>(null);
 
-export default function RoleManagement() {
-    const [users, setUsers] = useState<User[]>(mockUsers)
-    const [roles, setRoles] = useState<Role[]>(mockRoles)
-    const [searchTerm, setSearchTerm] = useState('')
-    const [roleFilter, setRoleFilter] = useState<string | null>(null)
-    const [statusFilter, setStatusFilter] = useState<string | null>(null)
-    const [currentPage, setCurrentPage] = useState(1)
-    const [showConfirmDialog, setShowConfirmDialog] = useState(false)
-    const [actionToConfirm, setActionToConfirm] = useState<{ type: string; payload: any } | null>(null)
+    const itemsPerPage = 10;
 
-    const itemsPerPage = 10
-
-    const filteredUsers = users.filter(user =>
-        (user.name.toLowerCase().includes(searchTerm.toLowerCase()) || user.email.toLowerCase().includes(searchTerm.toLowerCase())) &&
+    const filteredUsers = users.filter((user: User) =>
+        ((user.name || '').toLowerCase().includes(searchTerm.toLowerCase()) || (user.email || '').toLowerCase().includes(searchTerm.toLowerCase())) &&
         (!roleFilter || user.role === roleFilter) &&
         (!statusFilter || user.status === statusFilter)
-    )
+    );
+
 
     const paginatedUsers = filteredUsers.slice(
         (currentPage - 1) * itemsPerPage,
         currentPage * itemsPerPage
-    )
+    );
 
-    const pageCount = Math.ceil(filteredUsers.length / itemsPerPage)
+    const pageCount = Math.ceil(filteredUsers.length / itemsPerPage);
 
     const handleCreateRole = () => {
-        // Implement role creation logic
-        console.log('Create new role')
-    }
+        // Trigger role creation
+        setIsCreateRoleDialogOpen(true)
+    };
 
-    const handleEditRole = (roleId: string) => {
-        // Implement role editing logic
-        console.log('Edit role', roleId)
-    }
+    const handleCreateRoleSubmit = async (name: string, description: string, permissions: string[]) => {
+        const rolePayload = {
+            key: name.toLowerCase().replace(/\s+/g, '_'),
+            name,
+            description,
+            permissions,
+            extends: []
+        };
+
+        try {
+            const response = await apiClient.post('/api/policies/create-role', rolePayload); // Assuming this is your backend route for creating a role
+            const newRole = response.data.role; // Assuming the response includes the created role with an 'id'
+
+            onUpdateRole(newRole); // Updating role state or triggering re-fetch of roles
+            toast({
+                title: "Role Created",
+                description: `The role "${newRole.name}" has been created successfully.`,
+            });
+        } catch (error) {
+            console.error('Error creating role:', error);
+            toast({
+                title: "Error",
+                description: "Failed to create the role.",
+            });
+        }
+    };
+
+
+    const handleEditRole = (role: Role) => {
+        // Trigger role editing
+        onUpdateRole(role);
+    };
+
 
     const handleChangeUserRole = (userId: string, newRole: string) => {
-        setActionToConfirm({ type: 'changeRole', payload: { userId, newRole } })
-        setShowConfirmDialog(true)
-    }
-
-    const confirmAction = () => {
-        if (actionToConfirm) {
-            if (actionToConfirm.type === 'changeRole') {
-                const { userId, newRole } = actionToConfirm.payload
-                setUsers(users.map(user =>
-                    user.id === userId ? { ...user, role: newRole } : user
-                ))
-                toast({
-                    title: "Role Updated",
-                    description: "The user's role has been successfully updated.",
-                })
+        setActionToConfirm({
+            type: 'changeRole',
+            payload: {
+                userId,
+                newRole,
+                resourceType: selectedResourceType,
+                resourceKey: selectedResourceKey
             }
-            // Add other action types here if needed
+        });
+        setShowConfirmDialog(true);
+    };
+
+    const confirmAction = async () => {
+        if (actionToConfirm?.type === 'changeRole') {
+            const { userId, newRole, resourceType, resourceKey } = actionToConfirm.payload;
+
+            const payload = {
+                userId,
+                roleKey: newRole,
+                resourceType, // Dynamically set resourceType
+                resourceKey,  // Dynamically set resourceKey
+                tenant: "default"
+            };
+
+            try {
+                const response = await apiClient.post('/api/policies/assign-role', payload, {
+                    headers: {
+                        'user-id': userId
+                    }
+                });
+                if (response.status === 200) {
+                    toast({
+                        title: "Role Updated",
+                        description: "The user's role has been successfully updated.",
+                    });
+                } else {
+                    throw new Error("Role update failed");
+                }
+            } catch (error) {
+                toast({
+                    title: "Error",
+                    description: "Failed to update the user's role.",
+                });
+                console.error("Error assigning role:", error);
+            }
+
+            setShowConfirmDialog(false);
+            setActionToConfirm(null);
         }
-        setShowConfirmDialog(false)
-        setActionToConfirm(null)
-    }
+    };
 
     return (
         <div className="container mx-auto px-4 py-8">
-            <h1 className="text-3xl font-bold mb-6">Role Management</h1>
 
             {/* User Management Section */}
             <div className="mb-8">
@@ -124,29 +174,36 @@ export default function RoleManagement() {
                                 onChange={(e) => setSearchTerm(e.target.value)}
                             />
                         </div>
-                        <Select value={roleFilter || ''} onValueChange={(value: string | null) => setRoleFilter(value || null)}>
-                            <SelectTrigger className="w-40">
-                                <SelectValue placeholder="Role" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="">All Roles</SelectItem>
-                                {roles.map(role => (
-                                    <SelectItem key={role.id} value={role.name}>{role.name}</SelectItem>
+
+                        <div className="relative">
+                            <select
+                                className="block w-40 px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                                value={roleFilter || ''}
+                                onChange={(e) => setRoleFilter(e.target.value || null)}
+                            >
+                                <option value="">All Roles</option>
+                                {roles.map((role: Role) => (
+                                    <option key={role.id} value={role.name || `role-${role.id}`}>
+                                        {role.name || 'Unnamed Role'}
+                                    </option>
                                 ))}
-                            </SelectContent>
-                        </Select>
-                        <Select value={statusFilter || ''} onValueChange={(value: string | null) => setStatusFilter(value || null)}>
-                            <SelectTrigger className="w-40">
-                                <SelectValue placeholder="Status" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="">All Statuses</SelectItem>
-                                <SelectItem value="active">Active</SelectItem>
-                                <SelectItem value="inactive">Inactive</SelectItem>
-                            </SelectContent>
-                        </Select>
+                            </select>
+                        </div>
+
+                        <div className="relative">
+                            <select
+                                className="block w-40 px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                                value={statusFilter || ''}
+                                onChange={(e) => setStatusFilter(e.target.value || null)}
+                            >
+                                <option value="">All Statuses</option>
+                                <option value="active">Active</option>
+                                <option value="inactive">Inactive</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
+
 
                 <Table>
                     <TableHeader>
@@ -160,7 +217,7 @@ export default function RoleManagement() {
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {paginatedUsers.map((user) => (
+                        {paginatedUsers.map((user: User) => (
                             <TableRow key={user.id}>
                                 <TableCell>{user.name}</TableCell>
                                 <TableCell>{user.email}</TableCell>
@@ -172,16 +229,21 @@ export default function RoleManagement() {
                                     </Badge>
                                 </TableCell>
                                 <TableCell>
-                                    <Select onValueChange={(value: string) => handleChangeUserRole(user.id, value)}>
-                                        <SelectTrigger className="w-32">
-                                            <SelectValue placeholder="Change Role" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {roles.map(role => (
-                                                <SelectItem key={role.id} value={role.name}>{role.name}</SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
+                                    <TableCell>
+                                        <Select onValueChange={(value: string) => handleChangeUserRole(user.id, value)}>
+                                            <SelectTrigger className="w-32">
+                                                <SelectValue placeholder="Select Role" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {roles.map((role: Role) => (
+                                                    <SelectItem key={role.id} value={role.name ? role.name : `role-${role.id}`}>
+                                                        {role.name || 'Unnamed Role'}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+
+                                    </TableCell>
                                 </TableCell>
                             </TableRow>
                         ))}
@@ -214,7 +276,7 @@ export default function RoleManagement() {
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {roles.map(role => (
+                    {roles.map((role: Role) => (
                         <Card key={role.id}>
                             <CardHeader>
                                 <CardTitle>{role.name}</CardTitle>
@@ -229,8 +291,8 @@ export default function RoleManagement() {
                                 </div>
                             </CardContent>
                             <CardFooter className="flex justify-between">
-                                <p className="text-sm text-muted-foreground">Users: {role.userCount}</p>
-                                <Button variant="outline" size="sm" onClick={() => handleEditRole(role.id)}>
+                                {/* <p className="text-sm text-muted-foreground">Users: {role.userCount}</p> */}
+                                <Button variant="outline" size="sm" onClick={() => handleEditRole(role)}>
                                     <Edit className="mr-2 h-4 w-4" /> Edit Role
                                 </Button>
                             </CardFooter>
@@ -243,9 +305,9 @@ export default function RoleManagement() {
             <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Confirm Action</DialogTitle>
+                        <DialogTitle>Confirm Role Assignment</DialogTitle>
                         <DialogDescription>
-                            Are you sure you want to perform this action? This cannot be undone.
+                            Are you sure you want to assign this role? This action cannot be undone.
                         </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>
@@ -254,6 +316,14 @@ export default function RoleManagement() {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+
+            <CreateRoleDialog
+                open={isCreateRoleDialogOpen} // Correct prop: open (not 'on')
+                onOpenChange={setIsCreateRoleDialogOpen} // Correct handler for opening and closing dialog
+                onCreateRole={handleCreateRoleSubmit} // The function to handle role creation
+            />
+
         </div>
-    )
+    );
 }

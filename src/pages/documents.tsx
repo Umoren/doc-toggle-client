@@ -1,10 +1,11 @@
-import React, { useState, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from 'react-query'
-import axios from 'axios'
+import apiClient from '@/lib/api'
 import { Home, ChevronRight, Plus } from 'lucide-react'
+import { parseISO } from 'date-fns'
 import Layout from '@/components/Layout'
 import DocumentList from '@/components/DocumentList'
-import { Document } from '@/types/document'
+import { Document, DocumentAPI } from '@/types/document'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
@@ -16,7 +17,6 @@ import { permitState } from 'permit-fe-sdk'
 
 // Types and Interfaces
 
-
 interface FetchDocumentsParams {
     pageParam?: number
     filters?: Record<string, string>
@@ -24,31 +24,44 @@ interface FetchDocumentsParams {
 }
 
 interface FetchDocumentsResponse {
-    documents: Omit<Document, 'lastModified'>[]
+    documents: DocumentAPI[]
     totalPages: number
 }
 
 // API Functions
 const fetchDocuments = async ({ pageParam = 1, filters = {}, sort = {} }: FetchDocumentsParams): Promise<FetchDocumentsResponse> => {
-    const response = await axios.get('/api/policies/documents', {
+    const response = await apiClient.get('/api/policies/documents', {
         params: { page: pageParam, ...filters, ...sort }
-    })
-    return response.data
-}
+    });
+    return response.data;
+};
 
-const createDocument = async (document: Omit<Document, 'id'>): Promise<Document> => {
-    const response = await axios.post('/api/policies/documents', document)
-    return response.data
-}
+const createDocument = async (document: Omit<Document, 'id'>, userId: string): Promise<Document> => {
+    const response = await apiClient.post('/api/policies/documents', document, {
+        headers: {
+            'user-id': userId // Pass userId in the headers
+        }
+    });
+    return response.data;
+};
 
-const updateDocument = async (document: Document): Promise<Document> => {
-    const response = await axios.put(`/api/policies/documents/${document.id}`, document)
-    return response.data
-}
+const updateDocument = async (document: Document, userId: string): Promise<Document> => {
+    const response = await apiClient.put(`/api/policies/documents/${document.id}`, document, {
+        headers: {
+            'user-id': userId // Pass userId in the headers
+        }
+    });
+    return response.data;
+};
 
-const deleteDocument = async (id: string): Promise<void> => {
-    await axios.delete(`/api/policies/documents/${id}`)
-}
+const deleteDocument = async (id: string, userId: string): Promise<void> => {
+    await apiClient.delete(`/api/policies/documents/${id}`, {
+        headers: {
+            'user-id': userId // Pass userId in the headers
+        }
+    });
+};
+
 
 // Main Component
 export default function DocumentsPage() {
@@ -56,123 +69,181 @@ export default function DocumentsPage() {
     const [newDocument, setNewDocument] = useState<Omit<Document, 'id'>>({
         title: '',
         category: '',
-        lastModified: new Date().toISOString(),
+        lastModified: new Date(),
         author: '',
-        status: 'draft'
-    })
+        status: 'draft',
+        owner: '',
+        key: '',
+        created_at: new Date()
+    });
+
     const [currentPage, setCurrentPage] = useState(1)
     const [filters, setFilters] = useState<Record<string, string>>({})
     const [sort, setSort] = useState<Record<string, 'asc' | 'desc'>>({})
+    const { checkPermission, userId, isPermitReady } = useApp();  // Get checkPermission from context
+    const [canCreateDocument, setCanCreateDocument] = useState(false);
 
-    const { userId } = useApp()
     const { toast } = useToast()
     const queryClient = useQueryClient()
+
 
     // Queries and Mutations
     const { data, isLoading, error } = useQuery<FetchDocumentsResponse, Error>(
         ['documents', currentPage, filters, sort],
-        () => fetchDocuments({ pageParam: currentPage, filters, sort }),
-        {
-            keepPreviousData: true,
-            select: (data) => ({
-                ...data,
-                documents: data.documents.map(doc => ({
-                    ...doc,
-                    lastModified: new Date(doc.lastModified)
-                }))
-            })
-        }
-    )
+        () => fetchDocuments({ pageParam: currentPage, filters, sort })
+    );
 
-    const createMutation = useMutation(createDocument, {
+
+    const documents: Document[] = Array.isArray(data)
+        ? data.map((doc: DocumentAPI) => ({
+            id: doc.id,
+            title: doc.key,  // Treat 'key' as the title for UI purposes
+            category: doc.resource,  // 'resource' field as category
+            created_at: new Date(doc.created_at),  // Convert API string to Date
+            lastModified: new Date(doc.updated_at),  // Convert API string to Date
+            author: '',  // Default value if author is not available
+            status: 'draft',  // Default value if status is not provided
+            owner: '',  // Default value for owner
+            key: doc.key  // Use the 'key' field from the API
+        }))
+        : [];
+
+
+    useEffect(() => {
+
+        const fetchPermissions = async () => {
+            if (isPermitReady) {
+                const canCreate = await checkPermission('create', 'Document', 'default_document_resource');
+
+                setCanCreateDocument(canCreate);
+            } else {
+                console.log("Permit is not ready yet.");
+            }
+        };
+
+        if (userId && isPermitReady) {
+            fetchPermissions();
+        }
+    }, [userId, checkPermission, isPermitReady]);
+
+
+
+
+    const createMutation = useMutation((document: Omit<Document, 'id'>) => createDocument(document, userId!), {
         onSuccess: () => {
-            queryClient.invalidateQueries('documents')
-            setIsCreateDialogOpen(false)
-            setNewDocument({ title: '', category: '', lastModified: new Date().toISOString(), author: '', status: 'draft' })
+            queryClient.invalidateQueries('documents');
+            setIsCreateDialogOpen(false);
+            setNewDocument({
+                title: '',
+                category: '',
+                created_at: new Date(),
+                lastModified: new Date(),
+                author: '',
+                status: 'draft',
+                owner: '',
+                key: ''
+            });
+
             toast({
                 title: "Document Created",
                 description: "The new document has been successfully created.",
-            })
+                variant: "default", // Ensure variant is correctly set (default or another)
+            });
         },
         onError: (error: Error) => {
             toast({
                 title: "Error",
                 description: `Failed to create document: ${error.message}`,
                 variant: "destructive",
-            })
+            });
         },
-    })
+    });
 
-    const updateMutation = useMutation(updateDocument, {
+    const updateMutation = useMutation((document: Document) => updateDocument(document, userId!), {
         onSuccess: () => {
-            queryClient.invalidateQueries('documents')
+            queryClient.invalidateQueries('documents');
             toast({
                 title: "Document Updated",
                 description: "The document has been successfully updated.",
-            })
+            });
         },
         onError: (error: Error) => {
             toast({
                 title: "Error",
                 description: `Failed to update document: ${error.message}`,
                 variant: "destructive",
-            })
+            });
         },
-    })
+    });
 
-    const deleteMutation = useMutation(deleteDocument, {
+    const deleteMutation = useMutation((id: string) => deleteDocument(id, userId!), {
         onSuccess: () => {
-            queryClient.invalidateQueries('documents')
+            queryClient.invalidateQueries('documents');
             toast({
                 title: "Document Deleted",
                 description: "The document has been successfully deleted.",
-            })
+            });
         },
         onError: (error: Error) => {
             toast({
                 title: "Error",
                 description: `Failed to delete document: ${error.message}`,
                 variant: "destructive",
-            })
+            });
         },
-    })
+    });
+
 
     // Handlers
-    const handleCreateDocument = useCallback(() => {
-        if (permitState.check('create', 'Document', { userId }, {})) {
-            createMutation.mutate(newDocument)
+    const handleCreateDocument = useCallback(async () => {
+        if (!newDocument.title || !newDocument.category) {
+            toast({
+                title: "Invalid Data",
+                description: "Please fill in all required fields to create a document.",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        const hasPermission = await checkPermission('create', 'Document', 'default_document_resource');
+        if (hasPermission) {
+            createMutation.mutate(newDocument); // userId is passed in mutation
         } else {
             toast({
                 title: "Permission Denied",
                 description: "You don't have permission to create documents.",
                 variant: "destructive",
-            })
+            });
         }
-    }, [userId, newDocument, createMutation, toast])
+    }, [newDocument, createMutation, toast, checkPermission]);
 
-    const handleUpdateDocument = useCallback((document: Document) => {
-        if (permitState.check('update', 'Document', { userId }, {})) {
-            updateMutation.mutate(document)
+    const handleUpdateDocument = useCallback(async (document: Document) => {
+        const hasPermission = await checkPermission('update', 'Document', document.id);
+        if (hasPermission || userId === document.owner) {
+            updateMutation.mutate(document);
         } else {
             toast({
                 title: "Permission Denied",
-                description: "You don't have permission to update documents.",
+                description: "You don't have permission to update this document.",
                 variant: "destructive",
-            })
+            });
         }
-    }, [userId, updateMutation, toast])
+    }, [userId, updateMutation, toast, checkPermission]);
 
-    const handleDeleteDocument = useCallback((id: string) => {
-        if (permitState.check('delete', 'Document', { userId }, {})) {
-            deleteMutation.mutate(id)
+    const handleDeleteDocument = useCallback(async (id: string) => {
+        const document = documents.find(doc => doc.id === id);
+        const hasPermission = await checkPermission('delete', 'Document', document?.id || '');
+
+        if (hasPermission || userId === document?.owner) {
+            deleteMutation.mutate(id);
         } else {
             toast({
                 title: "Permission Denied",
-                description: "You don't have permission to delete documents.",
+                description: "You don't have permission to delete this document.",
                 variant: "destructive",
-            })
+            });
         }
-    }, [userId, deleteMutation, toast])
+    }, [userId, deleteMutation, documents, toast, checkPermission]);
 
     const handleFilter = useCallback((key: string, value: string) => {
         setFilters(prev => ({ ...prev, [key]: value }))
@@ -184,7 +255,7 @@ export default function DocumentsPage() {
         setCurrentPage(1)
     }, [])
 
-    // Render
+
     return (
         <Layout>
             <div className="container mx-auto px-4 py-8">
@@ -204,10 +275,13 @@ export default function DocumentsPage() {
 
                 <div className="flex justify-between items-center mb-6">
                     <h1 className="text-3xl font-bold">Documents</h1>
-                    {permitState.check('create', 'Document', { userId }, {}) && (
-                        <Button onClick={() => setIsCreateDialogOpen(true)}>
-                            <Plus className="mr-2 h-4 w-4" /> Create Document
-                        </Button>
+                    {canCreateDocument && (
+                        <>
+                            <Button onClick={() => setIsCreateDialogOpen(true)}>
+                                <Plus className="mr-2 h-4 w-4" /> Create Document
+                            </Button>
+                            <p>Can create document is TRUE.</p>
+                        </>
                     )}
                 </div>
 
@@ -218,14 +292,15 @@ export default function DocumentsPage() {
                 ) : (
                     <>
                         <DocumentList
-                            documents={data?.documents || []}
+                            documents={documents}
                             onCreateDocument={() => setIsCreateDialogOpen(true)}
                             onEditDocument={handleUpdateDocument}
                             onDeleteDocument={handleDeleteDocument}
-                            onShareDocument={() => { }} // Implement share functionality if needed
                             onSort={handleSort}
                             onFilter={handleFilter}
+                            onShareDocument={() => { /* Placeholder for sharing logic */ }}
                         />
+
                         <div className="mt-4 flex justify-center space-x-2">
                             {Array.from({ length: data?.totalPages || 1 }, (_, i) => i + 1).map((page) => (
                                 <Button
@@ -261,7 +336,7 @@ export default function DocumentsPage() {
                                 <label htmlFor="documentCategory" className="block text-sm font-medium text-gray-700">
                                     Category
                                 </label>
-                                <Select onValueChange={(value) => setNewDocument(prev => ({ ...prev, category: value }))}>
+                                <Select onValueChange={(value: string) => setNewDocument(prev => ({ ...prev, category: value }))}>
                                     <SelectTrigger id="documentCategory">
                                         <SelectValue placeholder="Select category" />
                                     </SelectTrigger>

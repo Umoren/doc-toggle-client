@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from 'react-query'
-import axios from 'axios'
+import apiClient from '@/lib/api'
 import Layout from '../components/Layout'
 import RoleManagement from '../components/RoleManagement'
 import { Button } from "@/components/ui/button"
@@ -19,15 +19,17 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { useApp } from '@/context/AppContext'
 
 // Types
 interface User {
-    id: string
-    name: string
-    email: string
-    role: string
-    lastLogin: string
-    status: 'active' | 'inactive'
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+    lastLogin: Date; // Ensure this matches the type in RoleManagement.tsx
+    status: 'active' | 'inactive';
+    created_at: Date;
 }
 
 interface Role {
@@ -37,37 +39,84 @@ interface Role {
     permissions: string[]
 }
 
-// API functions
-const fetchUsers = async (): Promise<User[]> => {
-    const response = await axios.get('/api/users')
-    return response.data
-}
+const fetchUsersFromAPI = async (userId: string | null): Promise<User[]> => {
+    if (!userId) {
+        return []; // Return an empty array if userId is null or undefined
+    }
+    const response = await apiClient.get('/api/policies/users', {
+        headers: {
+            'user-id': userId
+        }
+    });
 
-const fetchRoles = async (): Promise<Role[]> => {
-    const response = await axios.get('/api/roles')
-    return response.data
-}
+    // Access the `data` field within the response object
+    const users = response.data?.data;
 
-const updateUserRole = async ({ userId, roleId }: { userId: string; roleId: string }): Promise<User> => {
-    const response = await axios.put(`/api/users/${userId}/role`, { roleId })
-    return response.data
-}
+    if (!Array.isArray(users)) {
+        return []; // Ensure users is an array before proceeding
+    }
 
-const createRole = async (role: Omit<Role, 'id'>): Promise<Role> => {
-    const response = await axios.post('/api/roles', role)
-    return response.data
-}
+    return users.map((user: User) => ({
+        ...user,
+        lastLogin: new Date(user.created_at), // Convert string to Date (replace `lastLogin` with `created_at`)
+    }));
+};
 
-const updateRole = async (role: Role): Promise<Role> => {
-    const response = await axios.put(`/api/roles/${role.id}`, role)
-    return response.data
-}
+const fetchRolesFromAPI = async (userId: string | null): Promise<Role[]> => {
+    if (!userId) {
+        return []; // Return an empty array if userId is null or undefined
+    }
+    const response = await apiClient.get('/api/policies/list-roles', {
+        headers: {
+            'user-id': userId
+        }
+    });
+    return response.data;
+};
 
-const deleteRole = async (id: string): Promise<void> => {
-    await axios.delete(`/api/roles/${id}`)
-}
+const updateUserRole = async ({ userId, roleId }: { userId: string; roleId: string }, currentUserId: string): Promise<User> => {
+    const response = await apiClient.post(`/api/policies/users/${userId}/assign-role`, { roleId }, {
+        headers: {
+            'user-id': currentUserId
+        }
+    });
+    return response.data;
+};
+
+const createRole = async (role: Omit<Role, 'id'>, userId: string): Promise<Role> => {
+    if (!userId) {
+        throw new Error('User ID is required to create a role');
+    }
+    const response = await apiClient.post('/api/policies/create-role', role, {
+        headers: {
+            'user-id': userId
+        }
+    });
+    return response.data;
+};
+
+const updateRole = async (role: Role, userId: string): Promise<Role> => {
+    if (!userId) {
+        throw new Error('User ID is required to update a role');
+    }
+    const response = await apiClient.put(`/api/policies/update-role/${role.id}`, role, {
+        headers: {
+            'user-id': userId
+        }
+    });
+    return response.data;
+};
+
+const deleteRole = async (id: string, userId: string): Promise<void> => {
+    await apiClient.delete(`/api/policies/delete-role/${id}`, {
+        headers: {
+            'user-id': userId
+        }
+    });
+};
 
 export default function RolesPage() {
+    const { userId } = useApp(); // Hook should be called inside the component
     const [isCreateRoleDialogOpen, setIsCreateRoleDialogOpen] = useState(false)
     const [newRole, setNewRole] = useState<Omit<Role, 'id'>>({ name: '', description: '', permissions: [] })
     const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; action: () => void; title: string; description: string }>({
@@ -79,10 +128,10 @@ export default function RolesPage() {
 
     const queryClient = useQueryClient()
 
-    const { data: users, isLoading: isLoadingUsers, error: usersError } = useQuery('users', fetchUsers)
-    const { data: roles, isLoading: isLoadingRoles, error: rolesError } = useQuery('roles', fetchRoles)
+    const { data: users, isLoading: isLoadingUsers, error: usersError } = useQuery('users', () => fetchUsersFromAPI(userId));
+    const { data: roles, isLoading: isLoadingRoles, error: rolesError } = useQuery('roles', () => fetchRolesFromAPI(userId));
 
-    const updateUserRoleMutation = useMutation(updateUserRole, {
+    const updateUserRoleMutation = useMutation(({ userId, roleId }: { userId: string; roleId: string }) => updateUserRole({ userId, roleId }, userId), {
         onSuccess: () => {
             queryClient.invalidateQueries('users')
             toast({
@@ -92,37 +141,53 @@ export default function RolesPage() {
         },
     })
 
-    const createRoleMutation = useMutation(createRole, {
+    const createRoleMutation = useMutation((newRole: Omit<Role, 'id'>) => {
+        if (userId) {
+            return createRole(newRole, userId); // Only run if userId is available
+        }
+        return Promise.reject(new Error('User ID is required'));
+    }, {
         onSuccess: () => {
-            queryClient.invalidateQueries('roles')
-            setIsCreateRoleDialogOpen(false)
-            setNewRole({ name: '', description: '', permissions: [] })
+            queryClient.invalidateQueries('roles');
+            setIsCreateRoleDialogOpen(false);
+            setNewRole({ name: '', description: '', permissions: [] });
             toast({
                 title: "Role Created",
                 description: "The new role has been successfully created.",
-            })
+            });
         },
-    })
+    });
 
-    const updateRoleMutation = useMutation(updateRole, {
+    const updateRoleMutation = useMutation((role: Role) => {
+        if (userId) {
+            return updateRole(role, userId); // Proceed only if userId is available
+        }
+        return Promise.reject(new Error('User ID is required to update the role'));
+    }, {
         onSuccess: () => {
-            queryClient.invalidateQueries('roles')
+            queryClient.invalidateQueries('roles');
             toast({
                 title: "Role Updated",
                 description: "The role has been successfully updated.",
-            })
+            });
         },
-    })
+    });
 
-    const deleteRoleMutation = useMutation(deleteRole, {
+    const deleteRoleMutation = useMutation((id: string) => {
+        if (userId) {
+            return deleteRole(id, userId); // Proceed only if userId is available
+        }
+        return Promise.reject(new Error('User ID is required to delete the role'));
+    }, {
         onSuccess: () => {
-            queryClient.invalidateQueries('roles')
+            queryClient.invalidateQueries('roles');
             toast({
                 title: "Role Deleted",
                 description: "The role has been successfully deleted.",
-            })
+            });
         },
-    })
+    });
+
 
     const handleUpdateUserRole = (userId: string, roleId: string) => {
         setConfirmDialog({
@@ -170,7 +235,7 @@ export default function RolesPage() {
                     <BreadcrumbItem>
                         <ChevronRight className="h-4 w-4" />
                     </BreadcrumbItem>
-                    <BreadcrumbItem isCurrentPage>
+                    <BreadcrumbItem>
                         <BreadcrumbLink href="/roles">Roles</BreadcrumbLink>
                     </BreadcrumbItem>
                 </Breadcrumb>
@@ -181,7 +246,7 @@ export default function RolesPage() {
                 </div>
 
                 <RoleManagement
-                    users={users || []}
+                    users={users || []}  // Ensure users is always an array
                     roles={roles || []}
                     onUpdateUserRole={handleUpdateUserRole}
                     onUpdateRole={handleUpdateRole}
