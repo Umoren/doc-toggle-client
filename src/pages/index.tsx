@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import apiClient from '@/lib/api';
 import Layout from '../components/Layout';
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Plus, FileText, Users, FolderOpen } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
+import { Can } from '@casl/react';
 
 interface Category {
   id: string;
@@ -22,12 +23,9 @@ export default function Home() {
   const [totalCategories, setTotalCategories] = useState(0);
   const [totalDocuments, setTotalDocuments] = useState(0);
   const [totalUsers, setTotalUsers] = useState(0);
-  const [canCreateCategory, setCanCreateCategory] = useState(false);
-  const [canCreateDocument, setCanCreateDocument] = useState(false);
-  const [userRoles, setUserRoles] = useState<string[]>([]);
   const [userFullName, setUserFullName] = useState<string | null>(null);
 
-  const { checkPermission, userId } = useApp();
+  const { ability, userId } = useApp();
 
   useEffect(() => {
     const fetchData = async () => {
@@ -50,7 +48,7 @@ export default function Home() {
         });
         setTotalUsers(usersResponse.data.length);
 
-        // Fetch user roles and other info from the user object
+        // Fetch user data to get full name
         const userResponse = await apiClient.get(`/api/policies/users/${userId}`, {
           headers: {
             'user-id': userId,
@@ -58,53 +56,48 @@ export default function Home() {
         });
 
         const userData = userResponse.data;
-        const roles = userData.roles.map((roleObj: any) => roleObj.role);
-        setUserRoles(roles);
 
         // Set user's full name if available
         const fullName = `${userData.first_name} ${userData.last_name}`.trim();
         setUserFullName(fullName || userData.email); // Fallback to email if name is not available
-
       } catch (error) {
         console.error('Error fetching data:', error);
       }
     };
 
-    const fetchPermissions = async () => {
-      const canCreateCategory = await checkPermission('create', 'Category', 'some_category_id');
-      const canCreateDocument = await checkPermission('create', 'Document', 'some_document_id');
-      setCanCreateCategory(canCreateCategory);
-      setCanCreateDocument(canCreateDocument);
-    };
-
     if (userId) {
       fetchData();
-      fetchPermissions();
     }
-  }, [userId, checkPermission]);
+  }, [userId]);
 
-  // Renders a personalized message based on the user's roles
-  const renderRoleMessage = () => {
-    if (userRoles.includes('SuperAdmin')) {
-      return "You have full access to manage all resources.";
-    } else if (userRoles.includes('CategoryOwner')) {
-      return "You can manage categories and assign documents.";
-    } else if (userRoles.includes('DocumentOwner')) {
-      return "You can create, edit, and delete documents.";
-    } else if (userRoles.includes('Viewer')) {
-      return "You have view-only access to categories and documents.";
+  // Render a personalized message based on abilities
+  const renderAbilityMessage = () => {
+    if (!ability) {
+      return 'Loading permissions...';
     }
-    return "No specific roles assigned.";
+
+    if (ability.can('manage', 'all')) {
+      return 'You have full access to manage all resources.';
+    } else if (ability.can('manage', 'Category')) {
+      return 'You can manage categories.';
+    } else if (ability.can('manage', 'Document')) {
+      return 'You can manage documents.';
+    } else if (ability.can('read', 'Category') || ability.can('read', 'Document')) {
+      return 'You have read-only access to categories and documents.';
+    }
+    return 'You have limited access.';
   };
 
   return (
     <Layout>
       <div className="container mx-auto px-4 py-8">
-        <h1 className="text-4xl font-bold mb-6">Welcome to Document Manager, {userFullName || 'User'}</h1>
+        <h1 className="text-4xl font-bold mb-6">
+          Welcome to Document Manager{userFullName ? `, ${userFullName}` : ''}
+        </h1>
 
-        {/* Role Info */}
+        {/* Ability Info */}
         <div className="mb-6">
-          <p className="text-xl">{renderRoleMessage()}</p>
+          <p className="text-xl">{renderAbilityMessage()}</p>
         </div>
 
         {/* Summary Statistics */}
@@ -142,12 +135,12 @@ export default function Home() {
 
         {/* Quick Action Buttons */}
         <div className="flex space-x-4 mb-8">
-          {canCreateCategory && (
+          {ability && ability.can('create', 'Category') && (
             <Button>
               <Plus className="mr-2 h-4 w-4" /> Create New Category
             </Button>
           )}
-          {canCreateDocument && (
+          {ability && ability.can('create', 'Document') && (
             <Button>
               <Plus className="mr-2 h-4 w-4" /> Create New Document
             </Button>

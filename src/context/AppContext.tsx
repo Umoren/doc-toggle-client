@@ -1,162 +1,111 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import apiClient from '@/lib/api';
-import { createMongoAbility, AbilityBuilder, PureAbility } from '@casl/ability';
-import { initPermit, permitState } from '../lib/permit';
-import { useUser } from '@clerk/nextjs';
+// src/context/app-context.tsx
 
-type CaslRule = {
-  action: string;
-  subject: string;
-  inverted?: boolean;
-};
+import React, { createContext, useContext, useState, useEffect } from 'react'
+import apiClient from '@/lib/api'
+import { Ability, AbilityBuilder, AbilityClass, ExtractSubjectType } from '@casl/ability'
+import { useUser } from '@clerk/nextjs'
 
-interface AppContextType {
-  userId: string | null;
-  ability: PureAbility | null;
-  isPermitReady: boolean;
-  checkPermission: (action: string, resourceType: string, resourceId: string) => Promise<boolean>;
+interface Category {
+  id: string
+  name: string
+  description?: string
 }
 
-const AppContext = createContext<AppContextType | undefined>(undefined);
+interface Document {
+  id: string
+  title: string
+  category: string
+  createdAt: Date
+  lastModified: Date
+  author: string
+  status: 'draft' | 'published'
+  owner: string
+}
 
-export const AppProvider = ({ children }: { children: React.ReactNode }) => {
-  const { user } = useUser();
-  const [ability, setAbility] = useState<PureAbility | null>(null);
-  const [isPermitReady, setIsPermitReady] = useState(false);
+type Actions = 'manage' | 'create' | 'read' | 'update' | 'delete'
+type Subjects = 'Category' | 'Document' | 'all'
+
+type AppAbility = Ability<[Actions, Subjects]>
+
+interface AppContextType {
+  userId: string | null
+  ability: AppAbility
+}
+
+const AppContext = createContext<AppContextType | undefined>(undefined)
+
+export function AppProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useUser()
+  const [ability, setAbility] = useState<AppAbility>(() => new Ability([]))
 
   useEffect(() => {
-    const loadPermissions = async () => {
-      if (!user?.id) {
-        console.error('User data not loaded yet');
-        return;
-      }
+    async function loadUserRelationships() {
+      if (!user?.id) return
 
-      console.log('User ID:', user?.id);
       try {
-        // Register user with required fields
-        console.log('Registering user...');
-        await apiClient.post(
-          '/api/policies/register',
-          {
-            userId: user.id,
-            email: user.emailAddresses[0]?.emailAddress,
-            firstName: user.firstName,
-            lastName: user.lastName
-          },
-          {
-            headers: {
-              'user-id': user.id
+        const response = await apiClient.get('/api/policies/get-user-relationships', {
+          headers: { 'user-id': user.id },
+        })
+
+        const relationships = response.data.relationships
+
+        const defineAbilitiesFor = (): AppAbility => {
+          const { can, rules } = new AbilityBuilder<AppAbility>(Ability as AbilityClass<AppAbility>)
+
+          relationships.forEach((rel: any) => {
+            const match = rel.object.match(/^(\w+):(.+)$/)
+            if (!match) return
+
+            const [_, resourceType, resourceId] = match
+            if (!isSubject(resourceType)) return
+
+            const subject = resourceType as Subjects
+            const conditions = { id: resourceId }
+
+            switch (rel.relation) {
+              case 'owner':
+                can('manage', subject, conditions)
+                break
+              case 'editor':
+                can(['read', 'update'], subject, conditions)
+                break
+              case 'viewer':
+                can('read', subject, conditions)
+                break
+              default:
+                break
             }
-          }
-        );
+          })
 
-        // Fetch available resource instances
-        const resources = await apiClient.get('/api/policies/list-resource-instances', {
-          headers: {
-            'user-id': user.id
-          }
-        });
-
-        const defaultResource = resources.data.find((resource: any) => resource.resource === 'Category');
-        if (!defaultResource) {
-          console.error('No default Category resource found');
-          return;
+          return new Ability(rules) as AppAbility
         }
 
-        await apiClient.post(
-          '/api/policies/assign-role',
-          {
-            userId: user.id,
-            roleKey: 'Viewer',
-            resourceType: 'Category',
-            resourceKey: defaultResource.key,
-            tenant: defaultResource.tenant
-          },
-          {
-            headers: {
-              'user-id': user.id
-            }
-          }
-        );
-
-        const permit = initPermit(user.id);
-
-        await permit.loadLocalStateBulk([
-          { action: 'create', resource: 'Category' },
-          { action: 'read', resource: 'Category' },
-          { action: 'update', resource: 'Category' },
-          { action: 'delete', resource: 'Category' },
-          { action: 'create', resource: 'Document' },
-          { action: 'read', resource: 'Document' },
-          { action: 'update', resource: 'Document' },
-          { action: 'delete', resource: 'Document' }
-        ]);
-
-        const caslRules = permitState.getCaslJson() as CaslRule[];
-        if (!caslRules || caslRules.length === 0) {
-          console.error('No CASL rules returned from Permit');
-        }
-        console.log('CASL rules:', caslRules);
-
-        const { can, build } = new AbilityBuilder(createMongoAbility);
-
-        caslRules.forEach((rule) => {
-          console.log(`Processing rule for ${rule.subject}:`, rule);
-          can(rule.action, rule.subject);  // Removed `conditions` since it doesn't exist
-        });
-
-        setAbility(build());
-        console.log('CASL ability set successfully');
-
-        setIsPermitReady(true);
+        const updatedAbility = defineAbilitiesFor()
+        setAbility(updatedAbility)
       } catch (error) {
-        console.error('Error during role assignment or permission loading:', error);
+        console.error('Error loading user relationships:', error)
       }
-    };
-
-    loadPermissions();
-  }, [user]);
-
-  // Function to check user permission by calling the backend API
-  const checkPermission = async (action: string, resourceType: string, resourceId: string): Promise<boolean> => {
-    if (!user?.id) {
-      console.error('User ID is undefined, cannot check permission.');
-      return false;
     }
 
-    try {
-      const response = await apiClient.post(
-        '/api/policies/check-permission',
-        {
-          userId: user?.id,
-          action,
-          resourceType,
-          resourceId
-        },
-        {
-          headers: {
-            'user-id': user?.id
-          }
-        }
-      );
-      return response.data.permitted;
-    } catch (error) {
-      console.error('Error checking permission:', error);
-      return false;
-    }
-  };
+    loadUserRelationships()
+  }, [user])
 
   return (
-    <AppContext.Provider value={{ userId: user?.id || null, ability, isPermitReady, checkPermission }}>
+    <AppContext.Provider value={{ userId: user?.id || null, ability }}>
       {children}
     </AppContext.Provider>
-  );
-};
+  )
+}
 
-export const useApp = () => {
-  const context = useContext(AppContext);
-  if (context === undefined) {
-    throw new Error('useApp must be used within an AppProvider');
+export function useApp() {
+  const context = useContext(AppContext)
+  if (!context) {
+    throw new Error('useApp must be used within an AppProvider')
   }
-  return context;
-};
+  return context
+}
+
+// Helper function to check if a value is a valid subject
+function isSubject(value: string): value is Subjects {
+  return ['Category', 'Document', 'all'].includes(value)
+}

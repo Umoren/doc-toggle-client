@@ -1,30 +1,39 @@
-import { useState, useMemo, useEffect } from 'react';
+// src/components/DocumentList.tsx
+
+import React, { useState } from 'react';
 import { format } from 'date-fns';
-import { Edit, Trash2, Plus, Search, Filter } from 'lucide-react';
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
+import { Edit, Trash2, Plus, Search } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
 import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
     DropdownMenuLabel,
     DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from '@/components/ui/dropdown-menu';
 import { useApp } from '@/context/AppContext';
+import { Can } from '@casl/react';
 
-type Document = {
+interface Document {
     id: string;
     title: string;
     category: string;
+    created_at: Date;
     lastModified: Date;
     author: string;
     status: 'draft' | 'published';
     owner: string;
-    key: string;
-    created_at: Date;
-};
+}
 
 interface DocumentListProps {
     documents: Document[];
@@ -43,44 +52,14 @@ export default function DocumentList({
     onDeleteDocument,
     onShareDocument,
     onSort,
-    onFilter
+    onFilter,
 }: DocumentListProps) {
     const [searchTerm, setSearchTerm] = useState('');
-    const { checkPermission, userId, isPermitReady } = useApp();
-    const [canCreateDocument, setCanCreateDocument] = useState(false);
-    const [permissions, setPermissions] = useState<{ [key: string]: { canEdit: boolean; canDelete: boolean } }>({});
+    const { ability } = useApp();
 
-    useEffect(() => {
-        const fetchPermissions = async () => {
-            const permitted = await checkPermission('create', 'Document', 'default_document_resource'); // placeholder ID for resourceId
-            setCanCreateDocument(permitted);
-        };
-        if (userId) {
-            fetchPermissions();
-        }
-    }, [userId, checkPermission]);
-
-    useEffect(() => {
-        const fetchDocumentPermissions = async () => {
-            const permissionResults: { [key: string]: { canEdit: boolean; canDelete: boolean } } = {};
-            for (const document of documents) {
-                const canEdit = await checkPermission('update', 'Document', document.id);
-                const canDelete = await checkPermission('delete', 'Document', document.id);
-                permissionResults[document.id] = { canEdit, canDelete };
-            }
-            setPermissions(permissionResults);
-        };
-
-        if (documents.length > 0 && userId) {
-            fetchDocumentPermissions();
-        }
-    }, [documents, userId, checkPermission]);
-
-    const filteredDocuments = useMemo(() => {
-        return documents.filter((doc) =>
-            doc.title.toLowerCase().includes(searchTerm.toLowerCase()) // Now correctly using `title`
-        );
-    }, [documents, searchTerm]);
+    const filteredDocuments = documents.filter((doc) =>
+        doc.title.toLowerCase().includes(searchTerm.toLowerCase())
+    );
 
     return (
         <div className="container mx-auto px-4 py-8">
@@ -96,23 +75,12 @@ export default function DocumentList({
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                     </div>
-
-                    {/* Replace shadcn select with native select */}
-                    <select
-                        className="w-40 border rounded-md px-2 py-1"
-                        onChange={(e) => onFilter('category', e.target.value)}
-                    >
-                        <option value="">All Categories</option>
-                        <option value="Finance">Finance</option>
-                        <option value="HR">HR</option>
-                        <option value="Marketing">Marketing</option>
-                    </select>
                 </div>
-                {canCreateDocument && (
+                <Can I="create" a="Document" ability={ability}>
                     <Button onClick={onCreateDocument}>
                         <Plus className="mr-2 h-4 w-4" /> Create Document
                     </Button>
-                )}
+                </Can>
             </div>
             <Table>
                 <TableHeader>
@@ -140,17 +108,23 @@ export default function DocumentList({
                 <TableBody>
                     {filteredDocuments.map((document) => (
                         <TableRow key={document.id}>
-                            <TableCell className="font-medium">{document.title}</TableCell> {/* Now using title */}
+                            <TableCell className="font-medium">{document.title}</TableCell>
                             <TableCell>
                                 <Badge variant="secondary">
-                                    {document.category || "Uncategorized"} {/* Ensure category is handled */}
+                                    {document.category || 'Uncategorized'}
                                 </Badge>
                             </TableCell>
-                            <TableCell>{format(new Date(document.created_at), 'MMM d, yyyy')}</TableCell> {/* Use created_at */}
-                            <TableCell>{document.author || "Unknown"}</TableCell> {/* Handle undefined author */}
                             <TableCell>
-                                <Badge variant={document.status === 'published' ? 'default' : 'outline'}>
-                                    {document.status || 'draft'}
+                                {format(document.lastModified, 'MMM d, yyyy')}
+                            </TableCell>
+                            <TableCell>{document.author || 'Unknown'}</TableCell>
+                            <TableCell>
+                                <Badge
+                                    variant={
+                                        document.status === 'published' ? 'default' : 'outline'
+                                    }
+                                >
+                                    {document.status}
                                 </Badge>
                             </TableCell>
                             <TableCell className="text-right">
@@ -158,25 +132,26 @@ export default function DocumentList({
                                     <DropdownMenuTrigger asChild>
                                         <Button variant="ghost" className="h-8 w-8 p-0">
                                             <span className="sr-only">Open menu</span>
-                                            <Filter className="h-4 w-4" />
+                                            <Edit className="h-4 w-4" />
                                         </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
                                         <DropdownMenuLabel>Actions</DropdownMenuLabel>
 
-                                        {/* Edit Action: Allow if user has update permission */}
-                                        {permissions[document.id]?.canEdit && (
+                                        <Can I="update" this={document} ability={ability}>
                                             <DropdownMenuItem onClick={() => onEditDocument(document)}>
                                                 <Edit className="mr-2 h-4 w-4" /> Edit
                                             </DropdownMenuItem>
-                                        )}
+                                        </Can>
 
-                                        {/* Delete Action: Allow if user has delete permission */}
-                                        {permissions[document.id]?.canDelete && (
-                                            <DropdownMenuItem onClick={() => onDeleteDocument(document.id)} className="text-red-600">
+                                        <Can I="delete" this={document} ability={ability}>
+                                            <DropdownMenuItem
+                                                onClick={() => onDeleteDocument(document.id)}
+                                                className="text-red-600"
+                                            >
                                                 <Trash2 className="mr-2 h-4 w-4" /> Delete
                                             </DropdownMenuItem>
-                                        )}
+                                        </Can>
                                     </DropdownMenuContent>
                                 </DropdownMenu>
                             </TableCell>
@@ -185,7 +160,9 @@ export default function DocumentList({
                 </TableBody>
             </Table>
             {filteredDocuments.length === 0 && (
-                <div className="text-center py-10 text-muted-foreground">No documents found</div>
+                <div className="text-center py-10 text-muted-foreground">
+                    No documents found
+                </div>
             )}
         </div>
     );

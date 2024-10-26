@@ -1,15 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { Search, Edit, Trash2, Plus } from 'lucide-react';
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState } from 'react';
+import { Search, Trash2, Plus } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { useApp } from '@/context/AppContext';
+import { Can } from '@casl/react';
 
 type Category = {
     id: string;
     name: string;
     description?: string;
-}
+};
 
 interface CategoryListProps {
     categories: Category[];
@@ -19,46 +20,11 @@ interface CategoryListProps {
 
 export default function CategoryList({ categories, onCreateCategory, onDeleteCategory }: CategoryListProps) {
     const [searchTerm, setSearchTerm] = useState('');
-    const { checkPermission, userId } = useApp();
+    const { ability } = useApp();
 
-    const [permissions, setPermissions] = useState<{
-        canCreate: boolean;
-        canUpdate: Record<string, boolean>;
-        canDelete: Record<string, boolean>;
-    }>({
-        canCreate: false,
-        canUpdate: {},
-        canDelete: {},
-    });
-
-    const filteredCategories = categories.filter(category =>
+    const filteredCategories = categories.filter((category) =>
         (category.name || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
-
-
-    useEffect(() => {
-        const fetchPermissions = async () => {
-            const canCreate = await checkPermission('create', 'Category', 'some_category_id');
-
-            const canUpdate: Record<string, boolean> = {};
-            const canDelete: Record<string, boolean> = {};
-
-            for (const category of categories) {
-                canUpdate[category.id] = await checkPermission('update', 'Category', category.id);
-                canDelete[category.id] = await checkPermission('delete', 'Category', category.id);
-            }
-
-            setPermissions({
-                canCreate,
-                canUpdate,
-                canDelete,
-            });
-        };
-
-        if (userId && categories.length) {
-            fetchPermissions();
-        }
-    }, [userId, categories, checkPermission]);
 
     const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
         setSearchTerm(e.target.value);
@@ -77,14 +43,14 @@ export default function CategoryList({ categories, onCreateCategory, onDeleteCat
                         onChange={handleSearch}
                     />
                 </div>
-                {permissions.canCreate && (
+                <Can I="create" a="Category" ability={ability}>
                     <Button onClick={onCreateCategory} className="bg-primary text-primary-foreground">
                         <Plus className="mr-2 h-4 w-4" /> Create Category
                     </Button>
-                )}
+                </Can>
             </div>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {filteredCategories.map(category => (
+                {filteredCategories.map((category) => (
                     <Card key={category.id}>
                         <CardHeader>
                             <CardTitle>{category.name}</CardTitle>
@@ -93,12 +59,11 @@ export default function CategoryList({ categories, onCreateCategory, onDeleteCat
                             <p className="text-sm text-muted-foreground">{category.description}</p>
                         </CardContent>
                         <CardFooter className="flex justify-end space-x-2">
-
-                            {permissions.canDelete[category.id] && (
+                            <Can I="delete" this={{ id: category.id, __type: 'Category' }} ability={ability}>
                                 <Button variant="outline" size="sm" onClick={() => onDeleteCategory(category.id)}>
                                     <Trash2 className="h-4 w-4" />
                                 </Button>
-                            )}
+                            </Can>
                         </CardFooter>
                     </Card>
                 ))}
