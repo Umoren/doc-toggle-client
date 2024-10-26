@@ -47,6 +47,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           headers: { 'user-id': user.id },
         })
 
+        console.log("resources", response)
+
         const relationships = response.data.relationships
 
         const defineAbilitiesFor = (): AppAbility => {

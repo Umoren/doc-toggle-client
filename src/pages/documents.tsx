@@ -26,14 +26,14 @@ interface Document {
 const fetchDocuments = async (): Promise<Document[]> => {
     const response = await apiClient.get('/api/policies/documents');
     return response.data.map((doc: any) => ({
-        id: doc.key, // Assuming 'key' is used as 'id'
-        title: doc.key,
+        id: doc.id,
+        title: doc.key, // Using 'key' as 'title'
         category: doc.resource || 'Uncategorized',
         created_at: new Date(doc.created_at),
         lastModified: new Date(doc.updated_at),
-        author: doc.author || 'Unknown',
-        status: doc.status || 'draft',
-        owner: doc.owner || '',
+        author: 'Unknown',
+        status: 'draft',
+        owner: doc.tenant || 'Unknown',
     }));
 };
 
